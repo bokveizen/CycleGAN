@@ -454,7 +454,10 @@ class AttentionGenerator(nn.Module):
         x = self.u64(x)
         x, attn_map2 = self.attn2(x)
         x = self.c7s1_3(x)
-        return x if not self.attn_map_output else x, attn_map1, attn_map2
+        if not self.attn_map_output:
+            return x
+        else:
+            return x, attn_map1, attn_map2
 
 
 class Self_Attn(nn.Module):
@@ -611,4 +614,8 @@ class AttentionDiscriminator(nn.Module):
         x = self.C512(x)
         x, attn_map2 = self.attn2(x)
         x = self.final_1d(x)
-        return x if not self.attn_map_output else x, attn_map1, attn_map2
+        if not self.attn_map_output:
+            return x
+        else:
+            return x, attn_map1, attn_map2
+
