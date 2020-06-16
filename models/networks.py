@@ -396,29 +396,116 @@ class AttentionGenerator(nn.Module):
 
         super(AttentionGenerator, self).__init__()
         ## Your Implementation Here ##
+        # fanchen: baseline + attn
+        self.attn_map_output = False
+        self.c7s1_64 = nn.Sequential(
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(input_nc, ngf, 7),
+            norm_layer(ngf),
+            nn.ReLU(True)  # fanchen: set inplace=True to save memory
+        )
+        self.d128 = nn.Sequential(
+            # nn.ReflectionPad2d(3),  # fanchen: redundant
+            nn.Conv2d(ngf, ngf * 2, 3, stride=2, padding=1),
+            norm_layer(ngf * 2),
+            nn.ReLU(True)
+        )
+        self.d256 = nn.Sequential(
+            # nn.ReflectionPad2d(3), # fanchen: redundant
+            nn.Conv2d(ngf * 2, ngf * 4, 3, stride=2, padding=1),
+            norm_layer(ngf * 4),
+            nn.ReLU(True)
+        )
+        # self.R256_list = nn.ModuleList(
+        #     [ResnetBlock(ngf * 4, padding_type, norm_layer, use_dropout) for _ in range(9)]
+        # )
+        self.R256_list = nn.Sequential(
+            *[ResnetBlock(ngf * 4, padding_type, norm_layer, use_dropout) for _ in range(9)]
+        )
+        self.u128 = nn.Sequential(
+            nn.ConvTranspose2d(ngf * 4, ngf * 2, 3, stride=2, padding=1, output_padding=1),
+            norm_layer(ngf * 2),
+            nn.ReLU(True)
+        )
+        self.attn1 = Self_Attn(ngf * 2)
+        self.u64 = nn.Sequential(
+            nn.ConvTranspose2d(ngf * 2, ngf, 3, stride=2, padding=1, output_padding=1),
+            norm_layer(ngf),
+            nn.ReLU(True)
+        )
+        self.attn2 = Self_Attn(ngf)
+        self.c7s1_3 = nn.Sequential(
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(ngf, output_nc, 7),
+            # norm_layer(ngf),
+            # nn.ReLU(True)
+            nn.Tanh()  # fanchen: using the implementation of the authors
+        )
 
     def forward(self, input):
         """Standard forward"""
         ## Your Implementation Here ##
-
-        return None
+        x = self.c7s1_64(input)
+        x = self.d128(x)
+        x = self.d256(x)
+        x = self.R256_list(x)
+        x = self.u128(x)
+        x, attn_map1 = self.attn1(x)
+        x = self.u64(x)
+        x, attn_map2 = self.attn2(x)
+        x = self.c7s1_3(x)
+        return x if not self.attn_map_output else x, attn_map1, attn_map2
 
 
 class Self_Attn(nn.Module):
     """ Self attention Layer"""
 
-    def __init__(self, in_dim, activation):
+    def __init__(self, in_dim, activation=None):
         """
         in_dim   -- input feature's channel dim
         activation    -- activation function type
         """
         super(Self_Attn, self).__init__()
         ## Your Implementation Here ##
+        # fanchen: input variables reg.
+        self.in_dim = in_dim
+        self.activation = activation
+        # fanchen: https://arxiv.org/pdf/1805.08318.pdf
+        # Figure 2, Eq. (1 - 4)
+        # The image features from the previous hidden layer x ∈ R
+        # C×N are first transformed into two feature spaces f, g
+        # to calculate the attention, where f(x) = Wfx, g(x) = Wgx
+        # In the above formulation, Wg ∈ R C¯×C ,Wf ∈ R C¯×C ,Wh ∈ R C¯×C , Wv ∈ R C×C¯
+        # are the learned weight matrices, which are implemented as 1×1 convolutions.
+        # For memory efficiency, we choose k = 8 (i.e., C¯ = C/8) in all our experiments.
+        # In addition, we further multiply the output of the attention
+        # layer by a scale parameter and add back the input feature
+        # map. Therefore, the final output is given by, yi = γoi + xi
+        # where γ is a learnable scalar and it is initialized as 0
+        # @ Fig. 2, "The softmax operation is performed on each row"
+        self.f = nn.Conv2d(in_dim, in_dim // 8, 1)
+        self.g = nn.Conv2d(in_dim, in_dim // 8, 1)
+        self.sm = nn.Softmax(-1)
+        self.h = nn.Conv2d(in_dim, in_dim // 8, 1)
+        self.v = nn.Conv2d(in_dim // 8, in_dim, 1)
+        self.gamma = nn.Parameter(torch.zeros(1))
 
     def forward(self, x):
         ## Your Implementation Here ##
-
-        return None
+        # fanchen: recommended BCWH form
+        B, C, W, H = x.size()
+        N = W * H
+        f_x = self.f(x).view(B, -1, N)  # fanchen: -1 supposed to be in_dim//8
+        f_x_T = f_x.permute(0, 2, 1)
+        g_x = self.g(x).view(B, -1, N)
+        # fanchen: should use bmm instead of mm as batch-like inputs are used
+        attn_map = self.sm(torch.bmm(f_x_T, g_x)).permute(0, 2, 1)  # fanchen: B * N * N, beta matrix in the paper
+        h_x = self.h(x).view(B, -1, N)
+        o = self.v(torch.bmm(h_x, attn_map)).view(B, C, W, H)  # fanchen: B * C * W * H
+        y = self.gamma * o + x
+        if self.activation:  # fanchen: final activation
+            y = self.activation(y)
+        return y, attn_map
 
 
 class BaselineDiscriminator(nn.Module):
@@ -463,6 +550,7 @@ class BaselineDiscriminator(nn.Module):
             nn.LeakyReLU(0.2, True)
         )
         self.final_1d = nn.Conv2d(ndf * 8, 1, 4, stride=1, padding=1)
+
     def forward(self, input):
         """Standard forward."""
         ## Your Implementation Here ##
@@ -487,9 +575,40 @@ class AttentionDiscriminator(nn.Module):
         """
         super(AttentionDiscriminator, self).__init__()
         ## Your Implementation Here ##
+        self.attn_map_output = False
+        self.C64 = nn.Sequential(
+            nn.Conv2d(input_nc, ndf, 4, stride=2, padding=1),
+            # We do not use InstanceNorm for the first C64 layer
+            nn.LeakyReLU(0.2, True)
+        )
+        self.C128 = nn.Sequential(
+            nn.Conv2d(ndf, ndf * 2, 4, stride=2, padding=1),
+            norm_layer(ndf * 2),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.C256 = nn.Sequential(
+            nn.Conv2d(ndf * 2, ndf * 4, 4, stride=2, padding=1),
+            norm_layer(ndf * 4),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.attn1 = Self_Attn(ndf * 4)
+        self.C512 = nn.Sequential(
+            # nn.Conv2d(ndf * 4, ndf * 8, 4, stride=2, padding=1),
+            nn.Conv2d(ndf * 4, ndf * 8, 4, stride=1, padding=1),  # fanchen: stride=1, according to the original imple.
+            norm_layer(ndf * 8),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.attn2 = Self_Attn(ndf * 8)
+        self.final_1d = nn.Conv2d(ndf * 8, 1, 4, stride=1, padding=1)
 
     def forward(self, input):
         """Standard forward"""
         ## Your Implementation Here ##
-
-        return None
+        x = self.C64(input)
+        x = self.C128(x)
+        x = self.C256(x)
+        x, attn_map1 = self.attn1(x)
+        x = self.C512(x)
+        x, attn_map2 = self.attn2(x)
+        x = self.final_1d(x)
+        return x if not self.attn_map_output else x, attn_map1, attn_map2
