@@ -153,13 +153,36 @@ class CycleGANModel(BaseModel):
         # @ paper, section 3, L = L_GAN + L_cyc + L_id
         # @ paper, the end of page 8, L_id is given
         # ||G(y) - y|| + ||F(x) - x||
-        L_GAN = (self.criterionGAN(self.netD_A(self.fake_B), True) +
-                 self.criterionGAN(self.netD_B(self.fake_A), True))
-        L_cyc = (self.criterionCycle(self.rec_A, self.real_A) * self.opt.lambda_A +
-                 self.criterionCycle(self.rec_B, self.real_B) * self.opt.lambda_B)
-        L_id = self.opt.lambda_identity * (
-                self.criterionIdt(self.netG_B(self.real_A), self.real_A) * self.opt.lambda_A +
-                self.criterionIdt(self.netG_A(self.real_B), self.real_B) * self.opt.lambda_B)
+
+        # fanchen: error
+        ################################################## ERROR ##################################################
+        # Traceback (most recent call last):
+        #  File "train.py", line 50, in <module>
+        #    losses = model.get_current_losses()
+        #  File "/home/CtrlDrive/fanchen/pyws/ee898_pa2/models/base_model.py", line 137, in get_current_losses
+        #    errors_ret[name] = float(getattr(self, 'loss_' + name))  # float(...) works for both scalar tensor and float number
+        # AttributeError: 'CycleGANModel' object has no attribute 'loss_G_A'
+        ################################################## ERROR ##################################################
+        # fanchen: old def
+        # L_GAN = (self.criterionGAN(self.netD_A(self.fake_B), True) +
+        #          self.criterionGAN(self.netD_B(self.fake_A), True))
+        # L_cyc = (self.criterionCycle(self.rec_A, self.real_A) * self.opt.lambda_A +
+        #          self.criterionCycle(self.rec_B, self.real_B) * self.opt.lambda_B)
+        # L_id = self.opt.lambda_identity * (
+        #         self.criterionIdt(self.netG_B(self.real_A), self.real_A) * self.opt.lambda_A +
+        #         self.criterionIdt(self.netG_A(self.real_B), self.real_B) * self.opt.lambda_B)
+        # @ models.base_model loss_names should be 'loss_' + name for name in self.loss_names
+        # For CycleGANModel, self.loss_names = self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
+        # So I need to change the def(name) of losses
+        self.loss_G_A = self.criterionGAN(self.netD_A(self.fake_B), True)
+        self.loss_G_B = self.criterionGAN(self.netD_B(self.fake_A), True)
+        L_GAN = self.loss_G_A + self.loss_G_B
+        self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * self.opt.lambda_A
+        self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * self.opt.lambda_B
+        L_cyc = self.loss_cycle_A + self.loss_cycle_B
+        self.idt_A = self.criterionIdt(self.netG_B(self.real_A), self.real_A) * self.opt.lambda_A
+        self.idt_B = self.criterionIdt(self.netG_A(self.real_B), self.real_B) * self.opt.lambda_B
+        L_id = (self.idt_A + self.idt_B) * self.opt.lambda_identity
         self.L_G = L_GAN + L_cyc + L_id
         self.L_G.backward()
         return self.L_G
