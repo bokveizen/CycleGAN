@@ -194,8 +194,8 @@ class CycleGANModel(BaseModel):
         # self.loss_idt_B = self.criterionIdt(self.netG_A(self.real_B), self.real_B) * self.opt.lambda_B
         self.idt_A = self.netG_A(self.real_B)
         self.idt_B = self.netG_B(self.real_A)
-        self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * self.opt.lambda_B * self.opt.lambda_idt
-        self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * self.opt.lambda_A * self.opt.lambda_idt
+        self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * self.opt.lambda_B * self.opt.lambda_identity
+        self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * self.opt.lambda_A * self.opt.lambda_identity
         L_id = self.loss_idt_A + self.loss_idt_B
         self.L_G = L_GAN + L_cyc + L_id
         self.L_G.backward()
