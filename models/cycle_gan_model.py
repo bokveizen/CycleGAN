@@ -174,15 +174,29 @@ class CycleGANModel(BaseModel):
         # @ models.base_model loss_names should be 'loss_' + name for name in self.loss_names
         # For CycleGANModel, self.loss_names = self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
         # So I need to change the def(name) of losses
+        ################################################## ERROR ##################################################
+        # (epoch: 1, iters: 200, time: 0.151, data: 0.231) D_A: 0.693 G_A: 0.629 cycle_A: 3.119 idt_A: 2.979 D_B: 0.473 G_B: 0.423 cycle_B: 3.961 idt_B: 3.972
+        # Traceback (most recent call last):
+        #   File "train.py", line 47, in <module>
+        #     visualizer.display_current_results(model.get_current_visuals(), epoch, save_result)
+        #   File "/home/CtrlDrive/fanchen/pyws/ee898_pa2/models/base_model.py", line 129, in get_current_visuals
+        #     visual_ret[name] = getattr(self, name)
+        # AttributeError: 'CycleGANModel' object has no attribute 'idt_B'
+        ################################################## ERROR ##################################################
         self.loss_G_A = self.criterionGAN(self.netD_A(self.fake_B), True)
         self.loss_G_B = self.criterionGAN(self.netD_B(self.fake_A), True)
         L_GAN = self.loss_G_A + self.loss_G_B
         self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * self.opt.lambda_A
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * self.opt.lambda_B
         L_cyc = self.loss_cycle_A + self.loss_cycle_B
-        self.loss_idt_A = self.criterionIdt(self.netG_B(self.real_A), self.real_A) * self.opt.lambda_A
-        self.loss_idt_B = self.criterionIdt(self.netG_A(self.real_B), self.real_B) * self.opt.lambda_B
-        L_id = (self.loss_idt_A + self.loss_idt_B) * self.opt.lambda_identity
+        # fanchen: need to specify idt_A/B
+        # self.loss_idt_A = self.criterionIdt(self.netG_B(self.real_A), self.real_A) * self.opt.lambda_A
+        # self.loss_idt_B = self.criterionIdt(self.netG_A(self.real_B), self.real_B) * self.opt.lambda_B
+        self.idt_A = self.netG_A(self.real_B)
+        self.idt_B = self.netG_B(self.real_A)
+        self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * self.opt.lambda_B * self.opt.lambda_idt
+        self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * self.opt.lambda_A * self.opt.lambda_idt
+        L_id = self.loss_idt_A + self.loss_idt_B
         self.L_G = L_GAN + L_cyc + L_id
         self.L_G.backward()
         return self.L_G
