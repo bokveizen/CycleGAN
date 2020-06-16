@@ -435,17 +435,43 @@ class BaselineDiscriminator(nn.Module):
         super(BaselineDiscriminator, self).__init__()
         ## Your Implementation Here ##
         # fanchen: using PatchGAN discriminator
-        # For discriminator networks, we use 70 × 70 PatchGAN [22]. Let Ck denote a
-        # 4 × 4 Convolution-InstanceNorm-LeakyReLU layer with k
+        # For discriminator networks, we use 70 × 70 PatchGAN [22].
+        # Let Ck denote a 4 × 4 Convolution-InstanceNorm-LeakyReLU layer with k
         # filters and stride 2. After the last layer, we apply a convolution to produce a
         # 1-dimensional output. We do not use InstanceNorm for the first C64 layer.
         # We use leaky ReLUs with a slope of 0.2. The discriminator architecture is:
         # C64-C128-C256-C512
+        self.C64 = nn.Sequential(
+            nn.Conv2d(input_nc, ndf, 4, stride=2, padding=1),
+            # We do not use InstanceNorm for the first C64 layer
+            nn.LeakyReLU(0.2, True)
+        )
+        self.C128 = nn.Sequential(
+            nn.Conv2d(ndf, ndf * 2, 4, stride=2, padding=1),
+            norm_layer(ndf * 2),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.C256 = nn.Sequential(
+            nn.Conv2d(ndf * 2, ndf * 4, 4, stride=2, padding=1),
+            norm_layer(ndf * 4),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.C512 = nn.Sequential(
+            # nn.Conv2d(ndf * 4, ndf * 8, 4, stride=2, padding=1),
+            nn.Conv2d(ndf * 4, ndf * 8, 4, stride=1, padding=1),  # fanchen: stride=1, according to the original imple.
+            norm_layer(ndf * 8),
+            nn.LeakyReLU(0.2, True)
+        )
+        self.final_1d = nn.Conv2d(ndf * 8, 1, 4, stride=1, padding=1)
     def forward(self, input):
         """Standard forward."""
         ## Your Implementation Here ##
-
-        return None
+        x = self.C64(input)
+        x = self.C128(x)
+        x = self.C256(x)
+        x = self.C512(x)
+        x = self.final_1d(x)
+        return x
 
 
 class AttentionDiscriminator(nn.Module):

@@ -14,6 +14,7 @@ class CycleGANModel(BaseModel):
 
     CycleGAN paper: https://arxiv.org/pdf/1703.10593.pdf
     """
+
     @staticmethod
     def modify_commandline_options(parser, is_train=True):
         """Add new dataset-specific options, and rewrite default values for existing options.
@@ -29,7 +30,8 @@ class CycleGANModel(BaseModel):
         if is_train:
             parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
             parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
-            parser.add_argument('--lambda_identity', type=float, default=0.5, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
+            parser.add_argument('--lambda_identity', type=float, default=0.5,
+                                help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
 
         return parser
 
@@ -72,16 +74,19 @@ class CycleGANModel(BaseModel):
 
         if self.isTrain:
             if opt.lambda_identity > 0.0:  # only works when input and output images have the same number of channels
-                assert(opt.input_nc == opt.output_nc)
+                assert (opt.input_nc == opt.output_nc)
             self.fake_A_pool = ImagePool(opt.pool_size)  # create image buffer to store previously generated images
             self.fake_B_pool = ImagePool(opt.pool_size)  # create image buffer to store previously generated images
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
-            self.criterionCycle = None  ## Your Implementation Here ##
-            self.criterionIdt = None  ## Your Implementation Here ##
+            # fanchen: for L_cycle and L_id, L1 norm is used
+            self.criterionCycle = torch.nn.L1Loss()  ## Your Implementation Here ##
+            self.criterionIdt = torch.nn.L1Loss()  ## Your Implementation Here ##
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
-            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
-            self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()),
+                                                lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()),
+                                                lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
 
@@ -101,10 +106,11 @@ class CycleGANModel(BaseModel):
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         ## Your Implementation Here ##
-        self.fake_B = None
-        self.rec_A = None
-        self.fake_A = None
-        self.rec_B = None
+        # fanchen: "Code (vs. paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)"
+        self.fake_B = self.netG_A(self.real_A)  # fanchen: x -> G(x)
+        self.rec_A = self.netG_B(self.fake_B)  # fanchen: G(x) -> F(G(x)) ----> x
+        self.fake_A = self.netG_B(self.real_B)  # fanchen: y -> F(y)
+        self.rec_B = self.netG_A(self.fake_A)  # fanchen: F(y) -> G(F(y)) ----> y
 
     def backward_D_basic(self, netD, real, fake):
         """Calculate GAN loss for the discriminator
@@ -117,8 +123,14 @@ class CycleGANModel(BaseModel):
         Return the discriminator loss.
         """
         ## Your Implementation Here ##
-
-        return None
+        # fanchen: paper section3.1 formula(1)
+        # self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
+        # L_GAN_D = 0.5 * (self.criterionGAN(netD(real), True) + self.criterionGAN(netD(fake), False))
+        L_D = 0.5 * (self.criterionGAN(netD(real), True) +
+                     self.criterionGAN(netD(fake.detach()), False))
+        # fanchen: detach() needed, according to the original imple.
+        L_D.backward()  # fanchen: grad. calculated @ original imple.
+        return L_D
 
     def backward_D_A(self):
         """Calculate GAN loss for discriminator D_A"""
@@ -130,10 +142,41 @@ class CycleGANModel(BaseModel):
         fake_A = self.fake_A_pool.query(self.fake_A)
         self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A, fake_A)
 
+    def backward_D(self):
+        self.backward_D_A()
+        self.backward_D_B()
+
     def backward_G(self):
         """Calculate the loss for generators G_A and G_B"""
         ## Your Implementation Here ##
+        # fanchen: for G_A (G), loss ~ 1 - D_A(G_A(x)) {D_Y(G(x))}
+        # @ paper, section 3, L = L_GAN + L_cyc + L_id
+        # @ paper, the end of page 8, L_id is given
+        # ||G(y) - y|| + ||F(x) - x||
+        L_GAN = (self.criterionGAN(self.netD_A(self.fake_B), True) +
+                 self.criterionGAN(self.netD_B(self.fake_A), True))
+        L_cyc = (self.criterionCycle(self.rec_A, self.real_A) * self.opt.lambda_A +
+                 self.criterionCycle(self.rec_B, self.real_B) * self.opt.lambda_B)
+        L_id = self.opt.lambda_identity * (
+                self.criterionIdt(self.netG_B(self.real_A), self.real_A) * self.opt.lambda_A +
+                self.criterionIdt(self.netG_A(self.real_B), self.real_B) * self.opt.lambda_B)
+        self.L_G = L_GAN + L_cyc + L_id
+        self.L_G.backward()
+        return self.L_G
 
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""
         ## Your Implementation Here ##
+        # fanchen: fake_A/B, rec_A/B computation
+        self.forward()
+        # ref: https://blog.csdn.net/special_hang/article/details/89676432
+        # zero_grad() -> backward -> step()
+        self.set_requires_grad([self.netD_A, self.netD_B], False)  # fanchen: get @ original imple.
+        self.optimizer_G.zero_grad()
+        self.backward_G()
+        self.optimizer_G.step()
+
+        self.set_requires_grad([self.netD_A, self.netD_B], True)  # fanchen: restore
+        self.optimizer_D.zero_grad()
+        self.backward_D()
+        self.optimizer_D.step()
