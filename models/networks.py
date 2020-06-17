@@ -410,12 +410,14 @@ class AttentionGenerator(nn.Module):
             norm_layer(ngf * 2),
             nn.ReLU(True)
         )
+        # self.attn1 = Self_Attn(ngf * 2)  # fanchen: attn layer moved
         self.d256 = nn.Sequential(
             # nn.ReflectionPad2d(3), # fanchen: redundant
             nn.Conv2d(ngf * 2, ngf * 4, 3, stride=2, padding=1),
             norm_layer(ngf * 4),
             nn.ReLU(True)
         )
+        self.attn1 = Self_Attn(ngf * 4)  # fanchen: attn layer moved
         # self.R256_list = nn.ModuleList(
         #     [ResnetBlock(ngf * 4, padding_type, norm_layer, use_dropout) for _ in range(9)]
         # )
@@ -427,13 +429,12 @@ class AttentionGenerator(nn.Module):
             norm_layer(ngf * 2),
             nn.ReLU(True)
         )
-        self.attn1 = Self_Attn(ngf * 2)
         self.u64 = nn.Sequential(
             nn.ConvTranspose2d(ngf * 2, ngf, 3, stride=2, padding=1, output_padding=1),
             norm_layer(ngf),
             nn.ReLU(True)
         )
-        self.attn2 = Self_Attn(ngf)
+        # self.attn2 = Self_Attn(ngf)
         self.c7s1_3 = nn.Sequential(
             nn.ReflectionPad2d(3),
             nn.Conv2d(ngf, output_nc, 7),
@@ -445,15 +446,30 @@ class AttentionGenerator(nn.Module):
     def forward(self, input):
         """Standard forward"""
         ## Your Implementation Here ##
+        attn_map1 = attn_map2 = None
         x = self.c7s1_64(input)
+        # print('after c7s1_64', x.size())
         x = self.d128(x)
+        # print('after d128', x.size())
+        # x, attn_map1 = self.attn1(x)
         x = self.d256(x)
-        x = self.R256_list(x)
-        x = self.u128(x)
         x, attn_map1 = self.attn1(x)
+        # print('after d256', x.size())
+        x = self.R256_list(x)
+        # print('after R256', x.size())
+        x = self.u128(x)
+        # print('after u128', x.size())
+        # fanchen: debug
+        # for _ in range(100):
+        #     print(x.size())
+        # torch.Size([2, 128, 128, 128])
+        # x, attn_map1 = self.attn1(x)
         x = self.u64(x)
-        x, attn_map2 = self.attn2(x)
+        # print('after u64', x.size())
+        # x, attn_map2 = self.attn2(x)
         x = self.c7s1_3(x)
+        # print('final', x.size())
+
         if not self.attn_map_output:
             return x
         else:
@@ -502,9 +518,22 @@ class Self_Attn(nn.Module):
         f_x_T = f_x.permute(0, 2, 1)
         g_x = self.g(x).view(B, -1, N)
         # fanchen: should use bmm instead of mm as batch-like inputs are used
-        attn_map = self.sm(torch.bmm(f_x_T, g_x)).permute(0, 2, 1)  # fanchen: B * N * N, beta matrix in the paper
+        # fanchen: debug
+        # print(f_x_T.size(), g_x.size())
+        # torch.Size([2, 16384, 16])
+        # torch.Size([2, 16, 16384])
+        # torch.Size([2, 65536, 8])
+        # torch.Size([2, 8, 65536])
+        s = torch.bmm(f_x_T, g_x)  # fanchen: matrix S in the paper
+        # fanchen: still ERROR!! @ s = torch.bmm(f_x_T, g_x), CUDA out of memory
+        attn_map = self.sm(s).permute(0, 2, 1)  # fanchen: B * N * N, beta matrix in the paper
+        # fanchen: ERROR!!
+        # File "/home/CtrlDrive/fanchen/pyws/ee898_pa2/models/networks.py", line 509, in forward
+        #    attn_map = self.sm(torch.bmm(f_x_T, g_x)).permute(0, 2, 1)  # fanchen: B * N * N, beta matrix in the paper
+        # RuntimeError: CUDA out of memory.
         h_x = self.h(x).view(B, -1, N)
-        o = self.v(torch.bmm(h_x, attn_map)).view(B, C, W, H)  # fanchen: B * C * W * H
+        # o = self.v(torch.bmm(h_x, attn_map)).view(B, C, W, H)  # fanchen: B * C * W * H
+        o = self.v(torch.bmm(h_x, attn_map).view(B, -1, W, H))  # fanchen: B * C * W * H, modified @ 0617
         y = self.gamma * o + x
         if self.activation:  # fanchen: final activation
             y = self.activation(y)
