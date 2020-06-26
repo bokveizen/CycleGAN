@@ -1,9 +1,10 @@
+import time
 import torch
 import torch.nn as nn
 from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
-
+import os
 
 ###############################################################################
 # Helper Functions
@@ -453,7 +454,7 @@ class AttentionGenerator(nn.Module):
         # print('after d128', x.size())
         # x, attn_map1 = self.attn1(x)
         x = self.d256(x)
-        # x, attn_map1 = self.attn1(x)  # fanchen: attn removed for G
+        x, attn_map1 = self.attn1(x)  # fanchen: attn removed for G for D_only version
         # print('after d256', x.size())
         x = self.R256_list(x)
         # print('after R256', x.size())
@@ -471,6 +472,8 @@ class AttentionGenerator(nn.Module):
         # print('final', x.size())
 
         if not self.attn_map_output:
+            os.makedirs('attn_vis_save_G', exist_ok=True)
+            torch.save((input, attn_map1), 'attn_vis_save_G/{}.pt'.format(str(int(time.time() * 1000000))))
             return x
         else:
             return x, attn_map1, attn_map2
@@ -644,8 +647,9 @@ class AttentionDiscriminator(nn.Module):
         x, attn_map2 = self.attn2(x)
         x = self.final_1d(x)
         if not self.attn_map_output:
+            os.makedirs('attn_vis_save_D', exist_ok=True)
+            torch.save((input, attn_map1, attn_map2), 'attn_vis_save_D/{}.pt'.format(str(int(time.time()*1000000))))
             return x
-            
         else:
             return x, attn_map1, attn_map2
 

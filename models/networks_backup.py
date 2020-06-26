@@ -645,7 +645,6 @@ class AttentionDiscriminator(nn.Module):
         x = self.final_1d(x)
         if not self.attn_map_output:
             return x
-            
         else:
             return x, attn_map1, attn_map2
 
